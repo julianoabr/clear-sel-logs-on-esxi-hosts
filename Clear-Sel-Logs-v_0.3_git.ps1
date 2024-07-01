@@ -1,4 +1,6 @@
-﻿#Requires -Modules Posh-SSH
+#Requires -RunAsAdministrator
+#Requires -Modules Posh-SSH
+#Requires -Modules Vmware.VimAutomation.Core
 
 <#
 .Synopsis
@@ -54,6 +56,12 @@ else{
     
 }#else validate module
 
+$todayDate = (Get-date -Format 'ddMMyyyy-HHmm').ToString()
+
+$outputFilePath = "$env:SystemDrive:\TEMP\SSH_FAIL"
+
+$fileName = "SSH_FAIL-$todayDate-ESXi-HOSTS.txt"
+
 #Get Encryted Password to Connect to ESXi
 $rootUser = "root"
 
@@ -85,7 +93,6 @@ $vcServerList = @()
 #ADD OR REMOVE vCenter Servers according to your environment   
 $vcServerList = ('SERVER1','SERVER2','SERVER3','SERVER4','SERVER5','SERVER6','SERVER7') | Sort-Object
 
-
 foreach ($vCServerName in $vCServerList)
 {
     
@@ -111,9 +118,9 @@ foreach ($vCServerName in $vCServerList)
             
             $mgmtInterfaceIP = $mgmtInterface.IP
 
-            $sshServiceStatus = Get-VmHostService -VMHost $esxiHostObj | Where { $_.Key -eq “TSM-SSH”}
+            $sshServiceObj = Get-VmHostService -VMHost $esxiHostObj | Where { $_.Key -eq “TSM-SSH”}
 
-            if ($sshServiceStatus.Running -eq $true){
+            if ($sshServiceObj.Running -eq $true){
                 
                     Write-Host ("Host: $esxiHostName. SSH Service is already running") -ForegroundColor White -BackgroundColor DarkCyan
 
@@ -121,21 +128,27 @@ foreach ($vCServerName in $vCServerList)
                     
                     if ($sshSessionStatus -eq $null){
                         
-                        Write-Host "Trying to connect with Main Credential" -ForegroundColor White -BackgroundColor DarkBlue
+                        Write-Host "Trying to connect to:$esxiHostName with Main Credential" -ForegroundColor White -BackgroundColor DarkBlue
 
-                        New-SSHSession -ComputerName $mgmtInterfaceIP -AcceptKey -ConnectionTimeout 300 -Credential $MainCred -Verbose -ErrorAction SilentlyContinue
+                        New-SSHSession -ComputerName $mgmtInterfaceIP -ConnectionTimeout 300 -Credential $MainCred -AcceptKey -Port 22 -Verbose -ErrorAction SilentlyContinue
                                                    
                         if ($error[0]){
                             
+                            Write-Output "Fail to connect to: $esxiHostName with Main Credential." | Out-File -FilePath  "$outputFilePath\$filename" -Append -Verbose
+
                             $error.Clear()
 
-                            Write-Host "Trying to connect with Secondary Credential" -ForegroundColor White -BackgroundColor DarkBlue
+                            Write-Host "Trying to connect to:$esxiHostName with Secondary Credential" -ForegroundColor White -BackgroundColor DarkBlue
 
-                            New-SSHSession -ComputerName $mgmtInterfaceIP -AcceptKey -ConnectionTimeout 300 -Credential $SecondaryCred -Verbose -ErrorAction SilentlyContinue
+                            New-SSHSession -ComputerName $mgmtInterfaceIP -ConnectionTimeout 300 -Credential $SecondaryCred -AcceptKey -Port 22 -Verbose -ErrorAction SilentlyContinue
 
                                 if ($error[0]){
                                 
-                                    Write-Host "I couldn't connect with Main Credential ou Secondary Credential. Try another one" -ForegroundColor White -BackgroundColor Red -Verbose                                
+                                    Write-Host "I couldn't connect with Main Credential ou Secondary Credential. Try another one" -ForegroundColor White -BackgroundColor Red -Verbose
+                                    
+                                    Write-Output "Fail to connect to: $esxiHostName with Secondary Credential" | Out-File -FilePath  "$outputFilePath\$filename" -Append -Verbose
+                                    
+                                    $error.clear()                      
                                 
                                 }#end of IF try to connect with alternate credential
                                 else{
@@ -157,7 +170,7 @@ foreach ($vCServerName in $vCServerList)
                                     }#valide if ssh connection is connected
                                     else{
                             
-                                        Write-Host "I didn't found SSH Session for ESXi Host: $esxiHostName" -ForegroundColor White -BackgroundColor Green                           
+                                        Write-Host "I didn't found any SSH Session for ESXi Host: $esxiHostName" -ForegroundColor White -BackgroundColor Green                           
                             
                                     }#valide else ssh connection is connected
                                 
@@ -168,12 +181,12 @@ foreach ($vCServerName in $vCServerList)
                             
                             Write-Host "Connected to $esxiHostName" -ForegroundColor White -BackgroundColor DarkCyan
 
-                            Invoke-SSHCommand -SessionId 0 -Command "localcli hardware ipmi sel clear" -Verbose
-
                             $sshSessionHost = Get-SSHSession -ComputerName $mgmtInterfaceIP -Verbose
 
                             $sshSessionID = $sshSessionHost.SessionID
-
+                            
+                            Invoke-SSHCommand -SessionId $sshSessionHost -Command "localcli hardware ipmi sel clear" -Verbose
+                            
                             [System.Boolean]$sshSessionState = $sshSessionHost.Connected
 
                             if ($sshSessionState){
@@ -183,7 +196,7 @@ foreach ($vCServerName in $vCServerList)
                             }#valide if ssh connection is connected
                             else{
                             
-                                Write-Host "I didn't found SSH Session for ESXi Host: $esxiHostName" -ForegroundColor White -BackgroundColor Green                           
+                                Write-Host "I didn't found any SSH Session for ESXi Host: $esxiHostName" -ForegroundColor White -BackgroundColor Green                           
                             
                             }#valide else ssh connection is connected
 
@@ -193,7 +206,7 @@ foreach ($vCServerName in $vCServerList)
                     }#validate if session is null
                     else{
                     
-                        Write-Host "I found a connection to this Host: $esxiHostName" -ForegroundColor White -BackgroundColor DarkGreen
+                        Write-Host "I found a connection to this ESXi Host: $esxiHostName" -ForegroundColor White -BackgroundColor DarkGreen
                     
                     
                     }#validate else session is null
@@ -201,28 +214,34 @@ foreach ($vCServerName in $vCServerList)
                 }#if validate ssh status
             else{
                 
-                    Start-VMHostService -HostService $sshServiceStatus -Confirm:$false -Verbose
+                    Start-VMHostService -HostService $sshServiceObj -Confirm:$false -Verbose
                     
                     Start-Sleep -Seconds 10
 
                     Write-Host ("Host: $esxiHostName. SSH Service is starting")
 
-                    Write-Host "Trying to connect with Main Credential" -ForegroundColor White -BackgroundColor DarkBlue
+                    Write-Host "Trying to connect to: $esxiHostName with Main Credential" -ForegroundColor White -BackgroundColor DarkBlue
                     
-                    New-SSHSession -ComputerName $mgmtInterfaceIP -AcceptKey -ConnectionTimeout 300 -Credential $MainCred -Verbose
+                    New-SSHSession -ComputerName $mgmtInterfaceIP -ConnectionTimeout 300 -Credential $MainCred -AcceptKey -Port 22 -Verbose
 
                     if ($error[0]){
-                            
+
+                            Write-Output "Fail to connect to: $esxiHostName with Main Credential." | Out-File -FilePath  "$outputFilePath\$filename" -Append -Verbose
+                                                        
                             $error.Clear()
 
-                            Write-Host "Trying to connect with Secondary Credential" -ForegroundColor White -BackgroundColor DarkBlue
+                            Write-Host "Trying to connect to: $esxiHostName with Secondary Credential" -ForegroundColor White -BackgroundColor DarkBlue
 
-                            New-SSHSession -ComputerName $mgmtInterfaceIP -ConnectionTimeout 300 -AcceptKey -Credential $SecondaryCred -Verbose
+                            New-SSHSession -ComputerName $mgmtInterfaceIP -ConnectionTimeout 300 -AcceptKey -Port 22 -Credential $SecondaryCred -Verbose
 
                                 if ($error[0]){
                                 
                                     Write-Host "In Host: $esxiHostName, I couldn't connect with Main Credential ou Secondary Credential. Try another one" -ForegroundColor White -BackgroundColor Red -Verbose                                
                                 
+                                    Write-Output "Fail to connect to: $esxiHostName with Secondary Credential." | Out-File -FilePath  "$outputFilePath\$filename" -Append -Verbose
+
+                                    $error.Clear()
+
                                 }#end of IF try to connect with alternate credential
                                 else{
                                 
@@ -289,5 +308,6 @@ foreach ($vCServerName in $vCServerList)
     }#End of ForEach Host
 
 }#End of ForEach for vCenter Server
+
 
 Disconnect-VIServer -Server * -Confirm:$false -Force -Verbose -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
