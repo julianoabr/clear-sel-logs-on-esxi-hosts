@@ -185,7 +185,7 @@ foreach ($vCServerName in $vCServerList)
 
                             $sshSessionID = $sshSessionHost.SessionID
                             
-                            Invoke-SSHCommand -SessionId $sshSessionHost -Command "localcli hardware ipmi sel clear" -Verbose
+                            Invoke-SSHCommand -SessionId $sshSessionID -Command "localcli hardware ipmi sel clear" -Verbose
                             
                             [System.Boolean]$sshSessionState = $sshSessionHost.Connected
 
